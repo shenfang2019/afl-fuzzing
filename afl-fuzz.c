@@ -127,6 +127,7 @@ EXP_ST u8  skip_deterministic,        /* Skip deterministic stages?       */
 static s32 out_fd,                    /* Persistent fd for out_file       */
            dev_urandom_fd = -1,       /* Persistent fd for /dev/urandom   */
            dev_null_fd = -1,          /* Persistent fd for /dev/null      */
+           dev_log_fd = -1,          /* Persistent fd for /dev/null      */
            fsrv_ctl_fd,               /* Fork server control pipe (write) */
            fsrv_st_fd;                /* Fork server status pipe (read)   */
 
@@ -222,6 +223,7 @@ static s32 cpu_aff = -1;       	      /* Selected CPU core                */
 #endif /* HAVE_AFFINITY */
 
 static FILE* plot_file;               /* Gnuplot output file              */
+static FILE* log_file;               /* Gnuplot output file              */
 
 struct queue_entry {
 
@@ -335,6 +337,23 @@ static u64 get_cur_time(void) {
 
 }
 
+static void get_time_str(char *time_str) {
+
+  time_t timep;
+  struct tm *p;
+
+  time(&timep);
+  p = localtime(&timep);
+  if (p) {
+    sprintf(time_str,
+        "%04d%02d%02d-%02d%02d%02d",
+        (1900 + p->tm_year), (1 + p->tm_mon),
+        p->tm_mday, p->tm_hour, p->tm_min, p->tm_sec);
+  } else {
+    sprintf(time_str, "none");
+  }
+
+}
 
 /* Get unix time in microseconds */
 
@@ -2035,9 +2054,11 @@ EXP_ST void init_forkserver(char** argv) {
 
     setsid();
 
-    dup2(dev_null_fd, 1);
-    dup2(dev_null_fd, 2);
+    //dup2(dev_null_fd, 1);
+    //dup2(dev_null_fd, 2);
 
+    dup2(dev_log_fd, 1);
+    dup2(dev_log_fd, 2);
     if (out_file) {
 
       dup2(dev_null_fd, 0);
@@ -2054,6 +2075,7 @@ EXP_ST void init_forkserver(char** argv) {
     if (dup2(ctl_pipe[0], FORKSRV_FD) < 0) PFATAL("dup2() failed");
     if (dup2(st_pipe[1], FORKSRV_FD + 1) < 0) PFATAL("dup2() failed");
 
+
     close(ctl_pipe[0]);
     close(ctl_pipe[1]);
     close(st_pipe[0]);
@@ -2061,6 +2083,7 @@ EXP_ST void init_forkserver(char** argv) {
 
     close(out_dir_fd);
     close(dev_null_fd);
+    close(dev_log_fd);
     close(dev_urandom_fd);
     close(fileno(plot_file));
 
@@ -2335,6 +2358,7 @@ static u8 run_target(char** argv, u32 timeout) {
       close(out_dir_fd);
       close(dev_urandom_fd);
       close(fileno(plot_file));
+      close(fileno(log_file));
 
       /* Set sane defaults for ASAN if nothing else specified. */
 
@@ -3448,6 +3472,74 @@ static void write_stats_file(double bitmap_cvg, double stability, double eps) {
              /* ignore errors */
 
   fclose(f);
+
+}
+
+
+/* Update log file for unattended monitoring. */
+
+static void write_stats_log(double bitmap_cvg, double stability, double eps) {
+
+  static double last_bcvg, last_stab, last_eps;
+
+
+  /* Keep last values in case we're called from another context
+     where exec/sec stats and such are not readily available. */
+
+  if (!bitmap_cvg && !stability && !eps) {
+    bitmap_cvg = last_bcvg;
+    stability  = last_stab;
+    eps        = last_eps;
+  } else {
+    last_bcvg = bitmap_cvg;
+    last_stab = stability;
+    last_eps  = eps;
+  }
+
+  fprintf(log_file, "start_time        : %llu\n"
+             "last_update       : %llu\n"
+             "fuzzer_pid        : %u\n"
+             "cycles_done       : %llu\n"
+             "execs_done        : %llu\n"
+             "execs_per_sec     : %0.02f\n"
+             "paths_total       : %u\n"
+             "paths_favored     : %u\n"
+             "paths_found       : %u\n"
+             "paths_imported    : %u\n"
+             "max_depth         : %u\n"
+             "cur_path          : %u\n" /* Must match find_start_position() */
+             "pending_favs      : %u\n"
+             "pending_total     : %u\n"
+             "variable_paths    : %u\n"
+             "stability         : %0.02f%%\n"
+             "bitmap_cvg        : %0.02f%%\n"
+             "unique_crashes    : %llu\n"
+             "unique_hangs      : %llu\n"
+             "last_path         : %llu\n"
+             "last_crash        : %llu\n"
+             "last_hang         : %llu\n"
+             "execs_since_crash : %llu\n"
+             "exec_timeout      : %u\n"
+             "afl_banner        : %s\n"
+             "afl_version       : " VERSION "\n"
+             "target_mode       : %s%s%s%s%s%s%s\n"
+             "command_line      : %s\n",
+             start_time / 1000, get_cur_time() / 1000, getpid(),
+             queue_cycle ? (queue_cycle - 1) : 0, total_execs, eps,
+             queued_paths, queued_favored, queued_discovered, queued_imported,
+             max_depth, current_entry, pending_favored, pending_not_fuzzed,
+             queued_variable, stability, bitmap_cvg, unique_crashes,
+             unique_hangs, last_path_time / 1000, last_crash_time / 1000,
+             last_hang_time / 1000, total_execs - last_crash_execs,
+             exec_tmout, use_banner,
+             qemu_mode ? "qemu " : "", dumb_mode ? " dumb " : "",
+             no_forkserver ? "no_forksrv " : "", crash_mode ? "crash " : "",
+             persistent_mode ? "persistent " : "", deferred_mode ? "deferred " : "",
+             (qemu_mode || dumb_mode || no_forkserver || crash_mode ||
+              persistent_mode || deferred_mode) ? "" : "default",
+             orig_cmdline);
+             /* ignore errors */
+  fflush(log_file);
 
 }
 
@@ -7083,6 +7175,7 @@ EXP_ST void setup_dirs_fds(void) {
 
   u8* tmp;
   s32 fd;
+  char time_str[256];
 
   ACTF("Setting up output directories...");
 
@@ -7178,6 +7271,14 @@ EXP_ST void setup_dirs_fds(void) {
 
   dev_null_fd = open("/dev/null", O_RDWR);
   if (dev_null_fd < 0) PFATAL("Unable to open /dev/null");
+
+  get_time_str(time_str);
+  tmp = alloc_printf("%s/log_%s", out_dir, time_str);
+  dev_log_fd = open(tmp, O_RDWR | O_CREAT, 0600);
+  if (dev_log_fd < 0) PFATAL("Unable to open /out/log.file");
+  ck_free(tmp);
+  log_file = fdopen(dev_log_fd, "w");
+  if (!log_file) PFATAL("fdopen() failed");
 
   dev_urandom_fd = open("/dev/urandom", O_RDONLY);
   if (dev_urandom_fd < 0) PFATAL("Unable to open /dev/urandom");
@@ -8056,6 +8157,7 @@ int main(int argc, char** argv) {
 
     queue_cur = queue_cur->next;
     current_entry++;
+    write_stats_log(0, 0 , 0);
 
   }
 
@@ -8081,6 +8183,7 @@ stop_fuzzing:
   }
 
   fclose(plot_file);
+  fclose(log_file);
   destroy_queue();
   destroy_extras();
   ck_free(target_path);
