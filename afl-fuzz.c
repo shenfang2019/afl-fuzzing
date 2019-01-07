@@ -2338,9 +2338,11 @@ static u8 run_target(char** argv, u32 timeout) {
 
       setsid();
 
-      dup2(dev_null_fd, 1);
-      dup2(dev_null_fd, 2);
+      //dup2(dev_null_fd, 1);
+      //dup2(dev_null_fd, 2);
 
+      dup2(dev_log_fd, 1);
+      dup2(dev_log_fd, 2);
       if (out_file) {
 
         dup2(dev_null_fd, 0);
@@ -2355,6 +2357,7 @@ static u8 run_target(char** argv, u32 timeout) {
       /* On Linux, would be faster to use O_CLOEXEC. Maybe TODO. */
 
       close(dev_null_fd);
+      close(dev_log_fd);
       close(out_dir_fd);
       close(dev_urandom_fd);
       close(fileno(plot_file));

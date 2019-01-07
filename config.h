@@ -41,7 +41,7 @@
 /* Default timeout for fuzzed code (milliseconds). This is the upper bound,
    also used for detecting hangs; the actual value is auto-scaled: */
 
-#define EXEC_TIMEOUT        1000
+#define EXEC_TIMEOUT        50000
 
 /* Timeout rounding factor when auto-scaling (milliseconds): */
 
@@ -50,9 +50,9 @@
 /* Default memory limit for child process (MB): */
 
 #ifndef __x86_64__ 
-#  define MEM_LIMIT         25
+#  define MEM_LIMIT         0
 #else
-#  define MEM_LIMIT         50
+#  define MEM_LIMIT         0
 #endif /* ^!__x86_64__ */
 
 /* Default memory limit when running in QEMU mode (MB): */
@@ -62,8 +62,8 @@
 /* Number of calibration cycles per every new test case (and for test
    cases that show variable behavior): */
 
-#define CAL_CYCLES          8
-#define CAL_CYCLES_LONG     40
+#define CAL_CYCLES          2
+#define CAL_CYCLES_LONG     2
 
 /* Number of subsequent timeouts before abandoning an input file: */
 
